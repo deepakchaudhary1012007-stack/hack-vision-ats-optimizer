@@ -8,8 +8,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pypdf import PdfReader
 
-# Groq API Key
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
+# Yahan API key direct nahi likhi hai, yeh Render ke Environment se automatically aayegi
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 app = FastAPI(title="AI ATS Resume Optimizer")
 
@@ -32,7 +32,7 @@ def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     except Exception:
         return ""
 
-# Ye function hamesha ek List return karega taaki frontend frontend kabhi map error na de
+# Ye function hamesha ek List return karega taaki frontend kabhi map error na de
 def sanitize_list(data, key):
     val = data.get(key)
     if isinstance(val, list) and len(val) > 0:
@@ -52,8 +52,11 @@ def serve_home():
 @app.post("/api/analyze")
 async def analyze_resume(request: Request):
     try:
+        # Check if key exists in Render
+        if not GROQ_API_KEY:
+            raise Exception("API Key missing! Make sure you saved it in Render Environment.")
+
         # MAGIC SHIELD: Bypassing strict FastAPI rules! 
-        # Frontend chahe kisi bhi naam se file bheje, hum khud dhundh lenge.
         form_data = await request.form()
         
         resume_bytes = b""
@@ -141,11 +144,11 @@ async def analyze_resume(request: Request):
         # Ultimate Fallback: System crash hone par bhi frontend kabhi error popup nahi dega!
         return {
             "ats_score": 0,
-            "verdict": "Connection Error Resolved - Check Weaknesses",
-            "matched_keywords": ["System Error"],
-            "missing_keywords": ["System Error"],
+            "verdict": "Check Weaknesses section for Error Details",
+            "matched_keywords": ["None"],
+            "missing_keywords": ["None"],
             "section_scores": {"skills": 0, "experience": 0, "education": 0},
-            "strengths": ["Connection established"],
-            "weaknesses": [f"Detailed Error: {str(e)}"],
-            "tailored_suggestions": ["Try uploading the file again"]
+            "strengths": ["System tried to process the file"],
+            "weaknesses": [f"Error: {str(e)}"],
+            "tailored_suggestions": ["Ensure API Key is saved in Render Environment", "Try scanning again"]
         }
