@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SkillScan ATS - AI Resume Optimizer</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>body { font-family: 'Inter', sans-serif; }</style>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen">
+  <header class="border-b border-slate-800 bg-slate-900/50 sticky top-0 z-50">
+    <div class="max-w-6xl mx-auto px-6 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/30">AI</div>
+        <span class="font-bold text-lg">SkillScan <span class="text-indigo-400">ATS Optimizer</span></span>
+      </div>
+      <div class="flex items-center space-x-3">
+        <button id="navUserBtn" onclick="switchTab('user')" class="px-3.5 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white">Student View</button>
+        <button id="navAdminBtn" onclick="switchTab('admin')" class="px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300">Admin Analytics</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-6xl mx-auto px-6 py-10">
+    <div id="userView" class="space-y-8">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6 bg-slate-900 border border-slate-800 p-6 rounded-2xl shadow-xl">
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-2">1. Upload Resume (PDF / TXT)</label>
+          <div class="border-2 border-dashed border-slate-700 hover:border-indigo-500 rounded-xl p-6 text-center">
+            <input type="file" id="resumeInput" accept=".pdf,.txt" class="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-indigo-600 file:text-white">
+          </div>
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-2">2. Target Job Role</label>
+          <textarea id="jobDescInput" rows="4" class="w-full bg-slate-950 border border-slate-700 rounded-xl p-3 text-sm text-slate-200" placeholder="e.g. Python Full Stack Developer with FastAPI, SQL..."></textarea>
+          <button id="analyzeBtn" onclick="runAnalysis()" class="mt-3 w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 rounded-xl transition shadow-lg shadow-indigo-600/30">
+            Scan & Evaluate Resume
+          </button>
+        </div>
+      </div>
+
+      <div id="loader" class="hidden text-center py-10">
+        <div class="inline-block animate-spin rounded-full h-10 w-10 border-4 border-indigo-500 border-t-transparent"></div>
+        <p class="mt-3 text-sm text-slate-400">Gemini AI analyzing ATS parameters...</p>
+      </div>
+
+      <div id="resultsCard" class="hidden space-y-6">
+        <div class="flex items-center justify-between">
+          <h2 class="text-xl font-bold text-white">Evaluation Results</h2>
+          <button onclick="downloadPDFReport()" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-lg">
+            ⬇ Download ATS Audit Report (PDF)
+          </button>
+        </div>
+        <div id="exportableArea" class="bg-slate-900 border border-slate-800 p-8 rounded-2xl space-y-8">
+          <div class="grid grid-cols-1 md:grid-cols-3 gap-6 items-center border-b border-slate-800 pb-8">
+            <div>
+              <span class="text-xs uppercase font-semibold text-slate-400">ATS Score</span>
+              <div class="flex items-baseline space-x-2 mt-1">
+                <span id="scoreVal" class="text-6xl font-black text-indigo-400">0</span>
+                <span class="text-2xl text-slate-500">/100</span>
+              </div>
+            </div>
+            <div>
+              <span class="text-xs uppercase font-semibold text-slate-400">Match Status</span>
+              <div id="verdictBadge" class="mt-2 text-sm font-bold inline-block px-3 py-1.5 rounded-lg bg-indigo-950 text-indigo-300 border border-indigo-800">...</div>
+            </div>
+            <div class="space-y-1 text-xs">
+              <div class="flex justify-between"><span>Skills:</span><span id="scoreSkills">0%</span></div>
+              <div class="flex justify-between"><span>Experience:</span><span id="scoreExp">0%</span></div>
+              <div class="flex justify-between"><span>Projects:</span><span id="scoreProj">0%</span></div>
+              <div class="flex justify-between"><span>Formatting:</span><span id="scoreFormat">0%</span></div>
+            </div>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+              <h3 class="text-sm font-semibold text-emerald-400 mb-2">✔ Matched Keywords</h3>
+              <div id="matchedTags" class="flex flex-wrap gap-2"></div>
+            </div>
+            <div class="bg-slate-950 p-4 rounded-xl border border-slate-800">
+              <h3 class="text-sm font-semibold text-rose-400 mb-2">✖ Missing Keywords</h3>
+              <div id="missingTags" class="flex flex-wrap gap-2"></div>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-sm font-semibold text-amber-400 mb-2">Fixes Recommended</h3>
+            <ul id="fixesList" class="space-y-1 text-sm text-slate-300 list-disc pl-5"></ul>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="adminView" class="hidden space-y-6">
+      <h2 class="text-2xl font-bold text-white">Campus Placement & ATS Analytics</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
+          <p class="text-xs text-slate-400 uppercase font-semibold">Total Resumes Scanned</p>
+          <p id="adminTotalScans" class="text-5xl font-extrabold text-indigo-400 mt-2">0</p>
+        </div>
+        <div class="bg-slate-900 border border-slate-800 p-6 rounded-2xl">
+          <p class="text-xs text-slate-400 uppercase font-semibold">Average Student Score</p>
+          <p id="adminAvgScore" class="text-5xl font-extrabold text-emerald-400 mt-2">0</p>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <script>
+    function switchTab(tab) {
+      if(tab === 'user') {
+        document.getElementById('userView').classList.remove('hidden');
+        document.getElementById('adminView').classList.add('hidden');
+        document.getElementById('navUserBtn').className = "px-3.5 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white";
+        document.getElementById('navAdminBtn').className = "px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300";
+      } else {
+        document.getElementById('userView').classList.add('hidden');
+        document.getElementById('adminView').classList.remove('hidden');
+        document.getElementById('navAdminBtn').className = "px-3.5 py-1.5 rounded-lg text-sm font-medium bg-indigo-600 text-white";
+        document.getElementById('navUserBtn').className = "px-3.5 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300";
+        fetchAdmin();
+      }
+    }
+
+    async function runAnalysis() {
+      const file = document.getElementById('resumeInput').files[0];
+      const desc = document.getElementById('jobDescInput').value;
+      if (!file) return alert("Select a resume first!");
+
+      const fd = new FormData();
+      fd.append("resume_file", file);
+      fd.append("job_description", desc || "Software Engineer");
+
+      document.getElementById('loader').classList.remove('hidden');
+      document.getElementById('resultsCard').classList.add('hidden');
+
+      try {
+        const res = await fetch("/api/analyze", { method: "POST", body: fd });
+        const d = await res.json();
+        if (!res.ok) throw new Error(d.detail);
+
+        document.getElementById('scoreVal').innerText = d.ats_score;
+        document.getElementById('verdictBadge').innerText = d.verdict;
+        document.getElementById('scoreSkills').innerText = d.section_scores.skills + "%";
+        document.getElementById('scoreExp').innerText = d.section_scores.experience + "%";
+        document.getElementById('scoreProj').innerText = d.section_scores.projects + "%";
+        document.getElementById('scoreFormat').innerText = d.section_scores.formatting + "%";
+
+        document.getElementById('matchedTags').innerHTML = d.matched_keywords.map(k => `<span class="bg-emerald-950 text-emerald-300 border border-emerald-800 px-2.5 py-0.5 rounded text-xs font-medium">${k}</span>`).join('');
+        document.getElementById('missingTags').innerHTML = d.missing_keywords.map(k => `<span class="bg-rose-950 text-rose-300 border border-rose-800 px-2.5 py-0.5 rounded text-xs font-medium">${k}</span>`).join('');
+        document.getElementById('fixesList').innerHTML = d.actionable_fixes.map(f => `<li>${f}</li>`).join('');
+
+        document.getElementById('resultsCard').classList.remove('hidden');
+      } catch (err) {
+        alert("Error: " + err.message);
+      } finally {
+        document.getElementById('loader').classList.add('hidden');
+      }
+    }
+
+    function downloadPDFReport() {
+      html2pdf().set({ margin: 0.5, filename: 'ATS_Report.pdf', jsPDF: { unit: 'in', format: 'letter' } }).from(document.getElementById('exportableArea')).save();
+    }
+
+    async function fetchAdmin() {
+      const res = await fetch("/api/admin/stats");
+      const d = await res.json();
+      document.getElementById('adminTotalScans').innerText = d.total_scans;
+      document.getElementById('adminAvgScore').innerText = d.average_score;
+    }
+  </script>
+</body>
+</html>
