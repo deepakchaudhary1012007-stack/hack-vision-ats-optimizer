@@ -8,10 +8,8 @@ from google import genai
 from google.genai import types
 from pypdf import PdfReader
 
-# YAHAN LINE 13 PAR APNI COPY KI HUI KEY PASTE KAR DENA:
-os.environ["GEMINI_API_KEY"] = "AQ.Ab8RN6ITYy_fzqxGb2DqwEJG5hPhWMtaKHfaz3fjFUUTwbtwpg"
-
-client = genai.Client()
+API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6Lw3lumSQ4sEwfuTMJ7QXcgi8dCAgrgwK-alEQGcd6HVA")
+client = genai.Client(api_key=API_KEY)
 
 app = FastAPI(title="AI ATS Resume Optimizer")
 
@@ -64,7 +62,7 @@ async def analyze_resume(
   prompt = f"TARGET JOB:\n{job_description}\n\nRESUME:\n{resume_text}"
   try:
     response = client.models.generate_content(
-        model="gemini-3.8-flash",
+        model="gemini-2.5-flash",
         contents=prompt,
         config=types.GenerateContentConfig(
             response_mime_type="application/json",
