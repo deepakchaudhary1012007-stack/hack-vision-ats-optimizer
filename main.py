@@ -7,8 +7,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pypdf import PdfReader
 
-# Google Auth Token
-AUTH_TOKEN = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6Lw3lumSQ4sEwfuTMJ7QXcgi8dCAgrgwK-alEQGcd6HVA")
+# Groq API Key
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
 
 app = FastAPI(title="AI ATS Resume Optimizer")
 
@@ -52,50 +52,44 @@ async def analyze_resume(
     if not resume_text or len(resume_text.strip()) < 20:
         raise HTTPException(status_code=400, detail="Resume empty or text not readable.")
 
-    prompt = f"""You are an ATS Resume Analyzer. Analyze the following resume against the target job.
-Return ONLY valid raw JSON with this exact schema:
-{{
-  "ats_score": 85,
-  "verdict": "Good Fit",
-  "matched_keywords": ["Python", "FastAPI"],
-  "missing_keywords": ["Docker"],
-  "section_scores": {{"skills": 80, "experience": 85, "education": 90}},
-  "strengths": ["Clear project structure"],
-  "weaknesses": ["Add metrics and impact numbers"],
-  "tailored_suggestions": ["Include quantifiable results"]
-}}
+    system_prompt = (
+        "You are an ATS Resume Analyzer. Analyze the resume against the target job. "
+        "Return ONLY a valid JSON object matching this schema without any markdown formatting:\n"
+        "{\n"
+        '  "ats_score": 85,\n'
+        '  "verdict": "Good Fit",\n'
+        '  "matched_keywords": ["Python", "FastAPI"],\n'
+        '  "missing_keywords": ["Docker"],\n'
+        '  "section_scores": {"skills": 80, "experience": 85, "education": 90},\n'
+        '  "strengths": ["Clear project structure"],\n'
+        '  "weaknesses": ["Add metrics and impact numbers"],\n'
+        '  "tailored_suggestions": ["Include quantifiable results"]\n'
+        "}"
+    )
 
-TARGET JOB:
-{job_description}
-
-RESUME:
-{resume_text}
-"""
+    user_prompt = f"TARGET JOB:\n{job_description}\n\nRESUME:\n{resume_text}"
 
     headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {AUTH_TOKEN}"
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
     }
 
-    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
     payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"response_mime_type": "application/json"}
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt}
+        ],
+        "response_format": {"type": "json_object"}
     }
 
     try:
-        res = requests.post(url, headers=headers, json=payload, timeout=60)
-        
-        # Agar Bearer se bhi reject hua to query param try karega
-        if res.status_code != 200:
-            fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={AUTH_TOKEN}"
-            res = requests.post(fallback_url, json=payload, timeout=60)
-
+        res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
         if res.status_code != 200:
             raise HTTPException(status_code=res.status_code, detail=res.text)
 
         data = res.json()
-        raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        raw_text = data["choices"][0]["message"]["content"]
         result = json.loads(raw_text)
         return result
 
