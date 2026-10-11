@@ -75,7 +75,7 @@ async def analyze_resume(
     }
 
     payload = {
-       "model": "mixtral-8x7b-32768",
+       "model": "openai/gpt-oss-120b",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
