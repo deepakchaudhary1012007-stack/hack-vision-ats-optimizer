@@ -1,15 +1,14 @@
 import io
 import json
 import os
+import requests
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from google import genai
-from google.genai import types
 from pypdf import PdfReader
 
-API_KEY = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6Lw3lumSQ4sEwfuTMJ7QXcgi8dCAgrgwK-alEQGcd6HVA")
-client = genai.Client(api_key=API_KEY)
+# Google Auth Token
+AUTH_TOKEN = os.environ.get("GEMINI_API_KEY", "AQ.Ab8RN6Lw3lumSQ4sEwfuTMJ7QXcgi8dCAgrgwK-alEQGcd6HVA")
 
 app = FastAPI(title="AI ATS Resume Optimizer")
 
@@ -22,121 +21,83 @@ app.add_middleware(
 
 EVALUATION_HISTORY = []
 
-
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
-  try:
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    text = ""
-    for page in reader.pages:
-      extracted = page.extract_text()
-      if extracted:
-        text += extracted + "\n"
-    return text.strip()
-  except Exception as e:
-    raise HTTPException(status_code=400, detail=f"PDF read error: {str(e)}")
-
+    try:
+        reader = PdfReader(io.BytesIO(pdf_bytes))
+        text = ""
+        for page in reader.pages:
+            extracted = page.extract_text()
+            if extracted:
+                text += extracted + "\n"
+        return text.strip()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"PDF read error: {str(e)}")
 
 @app.get("/", response_class=HTMLResponse)
 def serve_home():
-  with open("index.html", "r", encoding="utf-8") as f:
-    return f.read()
-
+    with open("index.html", "r", encoding="utf-8") as f:
+        return f.read()
 
 @app.post("/api/analyze")
 async def analyze_resume(
     resume_file: UploadFile = File(...),
     job_description: str = Form("Software Engineer / Full Stack Developer"),
 ):
-  contents = await resume_file.read()
+    contents = await resume_file.read()
+    if resume_file.filename.endswith(".pdf"):
+        resume_text = extract_text_from_pdf(contents)
+    else:
+        resume_text = contents.decode("utf-8", errors="ignore")
 
-  if resume_file.filename.endswith(".pdf"):
-    resume_text = extract_text_from_pdf(contents)
-  else:
-    resume_text = contents.decode("utf-8", errors="ignore")
+    if not resume_text or len(resume_text.strip()) < 20:
+        raise HTTPException(status_code=400, detail="Resume empty or text not readable.")
 
-  if not resume_text or len(resume_text.strip()) < 20:
-    raise HTTPException(
-        status_code=400, detail="Resume empty or text not readable."
-    )
+    prompt = f"""You are an ATS Resume Analyzer. Analyze the following resume against the target job.
+Return ONLY valid raw JSON with this exact schema:
+{{
+  "ats_score": 85,
+  "verdict": "Good Fit",
+  "matched_keywords": ["Python", "FastAPI"],
+  "missing_keywords": ["Docker"],
+  "section_scores": {{"skills": 80, "experience": 85, "education": 90}},
+  "strengths": ["Clear project structure"],
+  "weaknesses": ["Add metrics and impact numbers"],
+  "tailored_suggestions": ["Include quantifiable results"]
+}}
 
-  prompt = f"TARGET JOB:\n{job_description}\n\nRESUME:\n{resume_text}"
-  try:
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            response_schema={
-                "type": "OBJECT",
-                "properties": {
-                    "ats_score": {"type": "NUMBER"},
-                    "verdict": {"type": "STRING"},
-                    "matched_keywords": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                    },
-                    "missing_keywords": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                    },
-                    "section_scores": {
-                        "type": "OBJECT",
-                        "properties": {
-                            "skills": {"type": "NUMBER"},
-                            "experience": {"type": "NUMBER"},
-                            "projects": {"type": "NUMBER"},
-                            "formatting": {"type": "NUMBER"},
-                        },
-                        "required": [
-                            "skills",
-                            "experience",
-                            "projects",
-                            "formatting",
-                        ],
-                    },
-                    "actionable_fixes": {
-                        "type": "ARRAY",
-                        "items": {"type": "STRING"},
-                    },
-                },
-                "required": [
-                    "ats_score",
-                    "verdict",
-                    "matched_keywords",
-                    "missing_keywords",
-                    "section_scores",
-                    "actionable_fixes",
-                ],
-            },
-        ),
-    )
+TARGET JOB:
+{job_description}
 
-    result_data = json.loads(response.text)
-    EVALUATION_HISTORY.append({
-        "filename": resume_file.filename,
-        "score": result_data.get("ats_score", 0),
-        "target_job": job_description[:30],
-        "verdict": result_data.get("verdict", "N/A"),
-    })
-    return result_data
-  except Exception as e:
-    raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
+RESUME:
+{resume_text}
+"""
 
+    headers = {
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {AUTH_TOKEN}"
+    }
 
-@app.get("/api/admin/stats")
-def get_admin_stats():
-  total = len(EVALUATION_HISTORY)
-  if total == 0:
-    return {"total_scans": 0, "average_score": 0, "history": []}
-  avg_score = sum([item["score"] for item in EVALUATION_HISTORY]) / total
-  return {
-      "total_scans": total,
-      "average_score": round(avg_score, 1),
-      "history": EVALUATION_HISTORY[-10:],
-  }
+    url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"response_mime_type": "application/json"}
+    }
 
+    try:
+        res = requests.post(url, headers=headers, json=payload, timeout=60)
+        
+        # Agar Bearer se bhi reject hua to query param try karega
+        if res.status_code != 200:
+            fallback_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={AUTH_TOKEN}"
+            res = requests.post(fallback_url, json=payload, timeout=60)
 
-if __name__ == "__main__":
-  import uvicorn
+        if res.status_code != 200:
+            raise HTTPException(status_code=res.status_code, detail=res.text)
 
-  uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+        data = res.json()
+        raw_text = data["candidates"][0]["content"]["parts"][0]["text"]
+        result = json.loads(raw_text)
+        return result
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
