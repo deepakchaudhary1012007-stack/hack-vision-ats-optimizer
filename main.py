@@ -19,6 +19,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Admin tab ke liye simple storage
+stats = {"total_scans": 0, "total_score": 0}
+
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
@@ -42,10 +45,15 @@ def serve_home():
     except Exception:
         return "<h1>index.html not found</h1>"
 
+# Naya Admin route jo index.html maang raha tha
+@app.get("/api/admin/stats")
+def get_stats():
+    avg = round(stats["total_score"] / stats["total_scans"]) if stats["total_scans"] > 0 else 0
+    return {"total_scans": stats["total_scans"], "average_score": avg}
+
 @app.post("/api/analyze")
 async def analyze_resume(request: Request):
     try:
-        # Check if key is loaded from Render
         if not GROQ_API_KEY:
             raise ValueError("API Key is missing in Render Environment Variables.")
 
@@ -69,6 +77,7 @@ async def analyze_resume(request: Request):
         else:
             resume_text = resume_bytes.decode("utf-8", errors="ignore")
 
+        # EXACT Match to index.html variables (actionable_fixes, projects, formatting)
         system_prompt = (
             "You are an ATS Resume Analyzer. Compare the resume to the job description. "
             "You MUST respond ONLY with a VALID JSON object exactly matching this schema. No markdown:\n"
@@ -77,10 +86,8 @@ async def analyze_resume(request: Request):
             '  "verdict": "Good Fit",\n'
             '  "matched_keywords": ["Skill1"],\n'
             '  "missing_keywords": ["Skill2"],\n'
-            '  "section_scores": {"skills": 80, "experience": 85, "education": 90},\n'
-            '  "strengths": ["Point 1"],\n'
-            '  "weaknesses": ["Point 1"],\n'
-            '  "tailored_suggestions": ["Point 1"]\n'
+            '  "section_scores": {"skills": 80, "experience": 85, "projects": 90, "formatting": 85},\n'
+            '  "actionable_fixes": ["Point 1", "Point 2"]\n'
             "}"
         )
 
@@ -114,17 +121,20 @@ async def analyze_resume(request: Request):
         else:
             raise ValueError("AI did not return valid JSON format.")
 
+        final_score = int(ai_data.get("ats_score", 70))
+        
+        # Admin stats update ho rahe hain
+        stats["total_scans"] += 1
+        stats["total_score"] += final_score
+
         return {
-            "ats_score": int(ai_data.get("ats_score", 70)),
+            "ats_score": final_score,
             "verdict": str(ai_data.get("verdict", "Evaluated successfully")),
             "matched_keywords": sanitize_list(ai_data, "matched_keywords"),
             "missing_keywords": sanitize_list(ai_data, "missing_keywords"),
-            "section_scores": ai_data.get("section_scores", {"skills": 70, "experience": 70, "education": 70}),
-            "strengths": sanitize_list(ai_data, "strengths"),
-            "weaknesses": sanitize_list(ai_data, "weaknesses"),
-            "tailored_suggestions": sanitize_list(ai_data, "tailored_suggestions")
+            "section_scores": ai_data.get("section_scores", {"skills": 70, "experience": 70, "projects": 70, "formatting": 70}),
+            "actionable_fixes": sanitize_list(ai_data, "actionable_fixes")
         }
 
     except Exception as e:
-        # REAL ERROR REPORTING: Agar kuch fail hoga toh seedha Alert box aayega, map error nahi aayega!
         raise HTTPException(status_code=500, detail=str(e))
