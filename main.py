@@ -1,6 +1,7 @@
 import io
 import json
 import os
+import re
 import requests
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +36,17 @@ def serve_home():
     with open("index.html", "r", encoding="utf-8") as f:
         return f.read()
 
+# SAFETY FUNCTION: Ye assure karega ki AI chahe jaisa data de, frontend hamesha list hi receive karega
+def sanitize_list(data, key):
+    val = data.get(key)
+    if val is None:
+        return ["Not specified"]
+    if isinstance(val, str):
+        return [val]
+    if isinstance(val, list):
+        return val if len(val) > 0 else ["None found"]
+    return ["Not specified"]
+
 @app.post("/api/analyze")
 async def analyze_resume(
     resume_file: UploadFile = File(...),
@@ -48,17 +60,17 @@ async def analyze_resume(
             resume_text = contents.decode("utf-8", errors="ignore")
 
         system_prompt = (
-            "You are an ATS Resume Analyzer. Analyze the resume against the target job. "
-            "Return ONLY a valid JSON object matching this schema without any markdown formatting:\n"
+            "You are an expert ATS Resume Analyzer. Compare the resume to the job description. "
+            "You MUST respond ONLY with a VALID JSON object exactly matching this schema. No extra text:\n"
             "{\n"
             '  "ats_score": 85,\n'
             '  "verdict": "Good Fit",\n'
-            '  "matched_keywords": ["Python", "FastAPI"],\n'
-            '  "missing_keywords": ["Docker"],\n'
+            '  "matched_keywords": ["Skill1"],\n'
+            '  "missing_keywords": ["Skill2"],\n'
             '  "section_scores": {"skills": 80, "experience": 85, "education": 90},\n'
-            '  "strengths": ["Clear project structure"],\n'
-            '  "weaknesses": ["Add metrics and impact numbers"],\n'
-            '  "tailored_suggestions": ["Include quantifiable results"]\n'
+            '  "strengths": ["Point 1"],\n'
+            '  "weaknesses": ["Point 1"],\n'
+            '  "tailored_suggestions": ["Point 1"]\n'
             "}"
         )
 
@@ -71,47 +83,50 @@ async def analyze_resume(
             "model": "openai/gpt-oss-120b",
             "messages": [
                 {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"TARGET JOB:\n{job_description}\n\nRESUME:\n{resume_text}"}
-            ]
+                # Extra lambe text se crash rokne ke liye limit lagayi hai
+                {"role": "user", "content": f"TARGET JOB:\n{job_description}\n\nRESUME:\n{resume_text[:4000]}"}
+            ],
+            "temperature": 0.2
         }
 
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
         
         if res.status_code != 200:
-            raise Exception(f"API Error {res.status_code}: {res.text}")
+            raise Exception(f"API Error: {res.text}")
 
-        data = res.json()
-        raw_text = data["choices"][0]["message"]["content"]
+        # AI ke result se markdown/kachra saaf karna
+        raw_text = res.json()["choices"][0]["message"]["content"].strip()
+        raw_text = re.sub(r'```json\s*', '', raw_text)
+        raw_text = re.sub(r'```\s*', '', raw_text)
         
-        # Extract JSON safely
         start_idx = raw_text.find("{")
         end_idx = raw_text.rfind("}")
-        if start_idx == -1 or end_idx == -1:
-            raise Exception("AI did not return valid JSON")
+        if start_idx != -1 and end_idx != -1:
+            raw_text = raw_text[start_idx:end_idx+1]
             
-        result = json.loads(raw_text[start_idx:end_idx+1])
-        
-        # Guarantee arrays exist for frontend mapping
+        ai_data = json.loads(raw_text)
+
+        # Hamesha safe aur clean data frontend ko bhejna
         return {
-            "ats_score": result.get("ats_score", 70),
-            "verdict": result.get("verdict", "Evaluated"),
-            "matched_keywords": result.get("matched_keywords", ["Found basic skills"]),
-            "missing_keywords": result.get("missing_keywords", ["Review JD"]),
-            "section_scores": result.get("section_scores", {"skills": 70, "experience": 70, "education": 70}),
-            "strengths": result.get("strengths", ["Resume parsed"]),
-            "weaknesses": result.get("weaknesses", ["Update format"]),
-            "tailored_suggestions": result.get("tailored_suggestions", ["Tailor resume better"])
+            "ats_score": int(ai_data.get("ats_score") or 75),
+            "verdict": str(ai_data.get("verdict") or "Evaluation Complete"),
+            "matched_keywords": sanitize_list(ai_data, "matched_keywords"),
+            "missing_keywords": sanitize_list(ai_data, "missing_keywords"),
+            "section_scores": ai_data.get("section_scores") or {"skills": 75, "experience": 75, "education": 75},
+            "strengths": sanitize_list(ai_data, "strengths"),
+            "weaknesses": sanitize_list(ai_data, "weaknesses"),
+            "tailored_suggestions": sanitize_list(ai_data, "tailored_suggestions")
         }
 
     except Exception as e:
-        # MAGIC SHIELD: Return formatted dummy data with the EXACT error message so frontend NEVER crashes
+        # Agar kuch bhi fatega, toh code crash nahi hoga, ye screen par error dikhayega safely
         return {
             "ats_score": 0,
-            "verdict": "Check Weaknesses Section for Error",
+            "verdict": "Error processing response",
             "matched_keywords": ["None"],
             "missing_keywords": ["None"],
             "section_scores": {"skills": 0, "experience": 0, "education": 0},
             "strengths": ["None"],
-            "weaknesses": [f"BACKEND ERROR: {str(e)}"],
-            "tailored_suggestions": ["Please fix the backend issue shown above"]
+            "weaknesses": [f"Backend Error: {str(e)}"],
+            "tailored_suggestions": ["Please try again"]
         }
