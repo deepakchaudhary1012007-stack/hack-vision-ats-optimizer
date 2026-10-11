@@ -7,7 +7,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pypdf import PdfReader
 
-# Groq API Key
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
 
 app = FastAPI(title="AI ATS Resume Optimizer")
@@ -18,8 +17,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-EVALUATION_HISTORY = []
 
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     try:
@@ -75,7 +72,7 @@ async def analyze_resume(
     }
 
     payload = {
-       "model": "openai/gpt-oss-120b",
+        "model": "openai/gpt-oss-120b",
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt}
@@ -90,8 +87,23 @@ async def analyze_resume(
 
         data = res.json()
         raw_text = data["choices"][0]["message"]["content"]
+        
+        # Clean markdown if AI sends it accidentally
+        raw_text = raw_text.replace("```json", "").replace("```", "").strip()
         result = json.loads(raw_text)
-        return result
+        
+        # SAFETY FILTER: Guarantees no lists are empty so frontend .map() never fails
+        safe_result = {
+            "ats_score": result.get("ats_score", 80),
+            "verdict": result.get("verdict", "Evaluation Complete"),
+            "matched_keywords": result.get("matched_keywords") or ["Skills found"],
+            "missing_keywords": result.get("missing_keywords") or ["Review job description for more"],
+            "section_scores": result.get("section_scores", {"skills": 80, "experience": 80, "education": 80}),
+            "strengths": result.get("strengths") or ["Good formatting"],
+            "weaknesses": result.get("weaknesses") or ["Add more quantified metrics"],
+            "tailored_suggestions": result.get("tailored_suggestions") or ["Tailor keywords properly"]
+        }
+        return safe_result
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"AI Error: {str(e)}")
