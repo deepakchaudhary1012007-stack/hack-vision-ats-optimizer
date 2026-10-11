@@ -3,12 +3,11 @@ import json
 import os
 import re
 import requests
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pypdf import PdfReader
 
-# Yahan API key direct nahi likhi hai, yeh Render ke Environment se automatically aayegi
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY")
 
 app = FastAPI(title="AI ATS Resume Optimizer")
@@ -23,16 +22,10 @@ app.add_middleware(
 def extract_text_from_pdf(pdf_bytes: bytes) -> str:
     try:
         reader = PdfReader(io.BytesIO(pdf_bytes))
-        text = ""
-        for page in reader.pages:
-            extracted = page.extract_text()
-            if extracted:
-                text += extracted + "\n"
-        return text.strip()
+        return "\n".join(page.extract_text() for page in reader.pages if page.extract_text()).strip()
     except Exception:
         return ""
 
-# Ye function hamesha ek List return karega taaki frontend kabhi map error na de
 def sanitize_list(data, key):
     val = data.get(key)
     if isinstance(val, list) and len(val) > 0:
@@ -52,35 +45,29 @@ def serve_home():
 @app.post("/api/analyze")
 async def analyze_resume(request: Request):
     try:
-        # Check if key exists in Render
+        # Check if key is loaded from Render
         if not GROQ_API_KEY:
-            raise Exception("API Key missing! Make sure you saved it in Render Environment.")
+            raise ValueError("API Key is missing in Render Environment Variables.")
 
-        # MAGIC SHIELD: Bypassing strict FastAPI rules! 
         form_data = await request.form()
-        
         resume_bytes = b""
         filename = ""
         job_description = "Software Engineer"
         
         for key, value in form_data.items():
-            if hasattr(value, "filename") and value.filename: # File pehchanne ka tarika
+            if hasattr(value, "filename") and value.filename:
                 resume_bytes = await value.read()
                 filename = value.filename
-            elif isinstance(value, str) and len(value) > 2: # Text pehchanne ka tarika
+            elif isinstance(value, str) and len(value) > 2:
                 job_description = value
 
         if not resume_bytes:
-            raise Exception("File upload failed or missing in request.")
+            raise ValueError("Resume file upload failed or missing.")
 
-        # Read PDF
         if filename.lower().endswith(".pdf"):
             resume_text = extract_text_from_pdf(resume_bytes)
         else:
             resume_text = resume_bytes.decode("utf-8", errors="ignore")
-
-        if not resume_text.strip():
-            raise Exception("Empty PDF or could not read text.")
 
         system_prompt = (
             "You are an ATS Resume Analyzer. Compare the resume to the job description. "
@@ -111,13 +98,11 @@ async def analyze_resume(request: Request):
             "temperature": 0.2
         }
 
-        # Send to Groq
         res = requests.post("https://api.groq.com/openai/v1/chat/completions", headers=headers, json=payload, timeout=60)
         
         if res.status_code != 200:
-            raise Exception(f"Groq API Error: {res.text}")
+            raise ValueError(f"Groq API Error: {res.text}")
 
-        # Clean AI JSON
         raw_text = res.json()["choices"][0]["message"]["content"].strip()
         raw_text = re.sub(r'```json\s*', '', raw_text)
         raw_text = re.sub(r'```\s*', '', raw_text)
@@ -127,7 +112,7 @@ async def analyze_resume(request: Request):
         if start_idx != -1 and end_idx != -1:
             ai_data = json.loads(raw_text[start_idx:end_idx+1])
         else:
-            raise Exception("AI did not return valid JSON format.")
+            raise ValueError("AI did not return valid JSON format.")
 
         return {
             "ats_score": int(ai_data.get("ats_score", 70)),
@@ -141,14 +126,5 @@ async def analyze_resume(request: Request):
         }
 
     except Exception as e:
-        # Ultimate Fallback: System crash hone par bhi frontend kabhi error popup nahi dega!
-        return {
-            "ats_score": 0,
-            "verdict": "Check Weaknesses section for Error Details",
-            "matched_keywords": ["None"],
-            "missing_keywords": ["None"],
-            "section_scores": {"skills": 0, "experience": 0, "education": 0},
-            "strengths": ["System tried to process the file"],
-            "weaknesses": [f"Error: {str(e)}"],
-            "tailored_suggestions": ["Ensure API Key is saved in Render Environment", "Try scanning again"]
-        }
+        # REAL ERROR REPORTING: Agar kuch fail hoga toh seedha Alert box aayega, map error nahi aayega!
+        raise HTTPException(status_code=500, detail=str(e))
